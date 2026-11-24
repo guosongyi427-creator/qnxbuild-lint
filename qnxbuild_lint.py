@@ -72,15 +72,24 @@ def _register(check_id, severity, title, description):
 
 
 # --- mkifs .build files ----------------------------------------------------
+# B01/B02 are about mkifs syntax, which only appears at the top level
+# and inside the "boot" section.  Every other section -- "startup-script"
+# and inline files (.sh, .cfg, .conf, ...) -- holds file content (shell
+# code, config text, data), not mkifs syntax, so B01/B02 skip lines
+# inside those sections.  See check_build_file().
 _register("B01", "error", "Unbalanced braces or brackets",
           "A '{' has no matching '}' (or vice versa), or a '[' attribute "
           "bracket is not closed on its line. mkifs will fail to parse "
-          "the image definition.")
+          "the image definition. Lines inside an inline script/config "
+          "block (a section other than 'boot') are not checked, because "
+          "they are file content, not mkifs syntax.")
 _register("B02", "warning", "Unknown attribute in [...]",
           "An attribute name inside [...] is not a known mkifs attribute "
           "(image, virtual, uid, gid, perms, type, search, optional, "
           "keeplinked, script, session, data, ...). It is probably a typo "
-          "and mkifs will silently ignore it.")
+          "and mkifs will silently ignore it. Lines inside an inline "
+          "script/config block (a section other than 'boot') are not "
+          "checked, because they are file content, not mkifs syntax.")
 _register("B03", "error", "No boot section",
           "No '[virtual=...] boot = {' section found. Without a boot "
           "section mkifs cannot produce a bootable image.")
@@ -121,18 +130,27 @@ _register("B12", "warning", "Inline script file has no shebang",
           "directly.")
 
 # --- QNX recursive-make files ----------------------------------------------
+# M01/M02/M03 assume a common.mk is a standalone recursive-make project.
+# A common.mk that is a fragment or wrapper -- it drives its own build
+# (cmake, bjam, or its own targets) or forwards to another .mk file --
+# is not one, so those three checks do not apply to it.  See
+# _is_fragment_make().
 _register("M01", "error", "common.mk does not use QCONFIG",
           "A common.mk neither includes $(QCONFIG) nor defines QCONFIG. "
           "Without qconfig.mk the QNX recursive-make variables (CPU, "
-          "SECTION, PROJECT_ROOT, ...) are undefined.")
+          "SECTION, PROJECT_ROOT, ...) are undefined. Does not apply "
+          "to a fragment/wrapper common.mk.")
 _register("M02", "error", "common.mk missing qmacros.mk / qtargets.mk",
-          "A common.mk does not include $(MKFILES_ROOT)/qmacros.mk and "
-          "$(MKFILES_ROOT)/qtargets.mk. qtargets.mk is what actually "
-          "builds the target.")
+          "A common.mk does not include $(MKFILES_ROOT)/qtargets.mk, "
+          "and (only when qtargets.mk is absent too) "
+          "$(MKFILES_ROOT)/qmacros.mk. qtargets.mk is what actually "
+          "builds the target, and it pulls in qmacros.mk, so a file "
+          "that includes qtargets.mk need not include qmacros.mk as "
+          "well. Does not apply to a fragment/wrapper common.mk.")
 _register("M03", "error", "common.mk does not set NAME",
           "A common.mk never assigns NAME (directly or as an 'ifndef "
           "NAME' default). NAME is the name of the binary/library being "
-          "built.")
+          "built. Does not apply to a fragment/wrapper common.mk.")
 _register("M04", "warning", "USEFILE points at a missing file",
           "The USEFILE (the '.use' help text shipped with the binary) "
           "does not exist at the path given. Only reported when the path "
@@ -388,9 +406,30 @@ def check_build_file(path, text, findings, basename_index, build_dir):
     """Run the B01..B12 checks on one .build file."""
     bf = BuildFile(path, text)
 
+    # Lines inside an inline script/config block are file content (shell
+    # code, config text, data), not mkifs syntax.  Only the "boot"
+    # section's content is mkifs syntax; every other section
+    # ("startup-script" and inline files such as foo.sh, pci_server.cfg,
+    # /etc/passwd) holds file content.  B01/B02 skip those lines.  The
+    # section's own opening and closing lines are NOT skipped, so a
+    # section that is never closed still trips B01 (its lines are not in
+    # bf.sections at all, so nothing is skipped for it either).
+    inline_lines = set()
+    for _name, (start, end, _content) in bf.sections.items():
+        if _name == "boot":
+            continue
+        inline_lines.update(range(start + 1, end))
+
     # --- B01: brace / bracket balance -------------------------------------
+    # Braces and brackets on lines inside an inline script/config block
+    # are file content, not mkifs structure, so they do not affect the
+    # depth and are not bracket-checked.  (A section that is never closed
+    # is not in bf.sections, so its lines are not skipped and the
+    # unclosed '{' is still caught.)
     depth = 0
     for lineno, line in enumerate(bf.lines, 1):
+        if lineno in inline_lines:
+            continue
         opens = line.count("{")
         closes = line.count("}")
         depth += opens - closes
@@ -410,6 +449,8 @@ def check_build_file(path, text, findings, basename_index, build_dir):
 
     # --- B02: unknown attributes -------------------------------------------
     for lineno, line in enumerate(bf.raw_lines, 1):
+        if lineno in inline_lines:
+            continue
         if line.lstrip().startswith("#"):
             continue
         for attr_text in ATTR_RE.findall(line):
@@ -565,10 +606,11 @@ ASSIGN_RE = re.compile(
 
 
 def _parse_make(path, text):
-    """Return (includes, assignments) for a make file.
+    """Return (includes, assignments, stripped) for a make file.
 
     includes: list of (line, included-text)
     assignments: dict name -> (line, value); first assignment wins.
+    stripped: the file text with comments removed, for pattern checks.
     """
     stripped = strip_hash_comments(text)
     includes = []
@@ -587,22 +629,73 @@ def _parse_make(path, text):
             name, value = m.group(1), m.group(2)
             if name not in assignments:
                 assignments[name] = (lineno, value)
-    return includes, assignments
+    return includes, assignments, stripped
+
+
+def _is_fragment_make(includes, stripped):
+    """True if a common.mk is a fragment/wrapper, not a standalone
+    recursive-make project.
+
+    A common.mk is a fragment when ANY of these hold:
+
+    * it drives an external build system -- it sets CMAKE_ARGS, invokes
+      "cmake ", or invokes bjam/b2 (qnx-ports CMake/autotools wrappers);
+    * it defines its own build targets (a "name:" rule) instead of
+      relying on qtargets.mk to build;
+    * it forwards to another .mk file -- it includes a non-QNX .mk file
+      (e.g. "include ../../test_common.mk") while lacking QCONFIG,
+      qconfig.mk and qtargets.mk.
+
+    A standard recursive-make common.mk (includes $(QCONFIG), defines
+    NAME, includes qmacros.mk/qtargets.mk) matches none of these.
+    """
+    include_texts = [inc for _lineno, inc in includes]
+
+    def _has(fragment):
+        return any(fragment in inc for inc in include_texts)
+
+    # 1. External build system (cmake / bjam / b2).
+    if "CMAKE_ARGS" in stripped:
+        return True
+    if re.search(r"\bcmake\s", stripped):
+        return True
+    if re.search(r"\b(?:bjam|b2)\b", stripped):
+        return True
+    # 2. Own build targets (a "name:" rule; not a variable assignment).
+    if re.search(r"(?m)^[A-Za-z0-9_.\$()/%-]+\s*:[^=]", stripped):
+        return True
+    # 3. Include forwarder: includes some other .mk file but has no
+    #    QNX recursive-make setup of its own.
+    if not (_has("$(QCONFIG)") or _has("qconfig.mk")
+            or _has("qtargets.mk")):
+        for inc in include_texts:
+            inc = inc.strip()
+            if (inc.endswith(".mk")
+                    and "QCONFIG" not in inc
+                    and "qconfig.mk" not in inc
+                    and "qmacros.mk" not in inc
+                    and "qtargets.mk" not in inc):
+                return True
+    return False
 
 
 def check_make_file(path, text, findings, project_root, depth):
     """Run the M01..M07 checks on one .mk / Makefile."""
     basename = os.path.basename(path)
-    includes, assigns = _parse_make(path, text)
+    includes, assigns, stripped = _parse_make(path, text)
     include_texts = [inc for _ln, inc in includes]
 
     def has_include(fragment):
         return any(fragment in inc for inc in include_texts)
 
     is_common = basename == "common.mk"
+    # M01/M02/M03 assume a standalone recursive-make project.  A
+    # fragment/wrapper common.mk (cmake wrapper, own targets, include
+    # forwarder) is not one, so those three checks do not apply.
+    is_fragment = is_common and _is_fragment_make(includes, stripped)
 
     # --- M01: QCONFIG ------------------------------------------------------
-    if is_common:
+    if is_common and not is_fragment:
         if not (has_include("$(QCONFIG)") or has_include("qconfig.mk")
                 or "QCONFIG" in assigns):
             findings.append(Finding(
@@ -611,20 +704,25 @@ def check_make_file(path, text, findings, project_root, depth):
                 "QCONFIG; qconfig.mk sets up CPU/SECTION/PROJECT_ROOT."))
 
     # --- M02: qmacros.mk / qtargets.mk --------------------------------------
-    if is_common:
-        if not has_include("qmacros.mk"):
-            findings.append(Finding(
-                path, 1, "M02",
-                "common.mk does not include "
-                "$(MKFILES_ROOT)/qmacros.mk."))
+    # qtargets.mk pulls in qmacros.mk, so a file that includes
+    # qtargets.mk is not also required to include qmacros.mk.  Only
+    # flag qmacros.mk as missing when qtargets.mk is absent too.
+    if is_common and not is_fragment:
         if not has_include("qtargets.mk"):
-            findings.append(Finding(
-                path, 1, "M02",
-                "common.mk does not include "
-                "$(MKFILES_ROOT)/qtargets.mk; nothing will be built."))
+            if not has_include("qmacros.mk"):
+                findings.append(Finding(
+                    path, 1, "M02",
+                    "common.mk does not include "
+                    "$(MKFILES_ROOT)/qmacros.mk or "
+                    "$(MKFILES_ROOT)/qtargets.mk; nothing will be built."))
+            else:
+                findings.append(Finding(
+                    path, 1, "M02",
+                    "common.mk does not include "
+                    "$(MKFILES_ROOT)/qtargets.mk; nothing will be built."))
 
     # --- M03: NAME -----------------------------------------------------------
-    if is_common:
+    if is_common and not is_fragment:
         if "NAME" not in assigns:
             findings.append(Finding(
                 path, 1, "M03",
