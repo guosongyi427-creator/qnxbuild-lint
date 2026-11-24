@@ -145,7 +145,7 @@ QNX Everywhere, https://qnx.software) and is not part of this tool.
 python3 tests/run_tests.py
 ```
 
-19 tests: a clean synthetic project must produce zero findings, and
+23 tests: a clean synthetic project must produce zero findings, and
 each deliberately broken fixture must produce exactly its expected
 check IDs. The fixtures in `tests/fixtures/` are synthetic examples
 written for this project.
