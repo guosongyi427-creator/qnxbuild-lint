@@ -1,0 +1,8 @@
+# Synthetic broken build file: boot section runs ksh, not startup/procnto.
+[virtual=aarch64le,raw] boot = {
+    ksh -v
+}
+[+script] startup-script = {
+    ksh &
+}
+/bin/ksh=ksh
