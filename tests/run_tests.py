@@ -118,12 +118,41 @@ class TestBuildChecks(unittest.TestCase):
             os.path.join(FIXTURES, "bad_noshebang.build"))
         self.assertEqual(ids, {"B12"})
 
+    def test_inline_script_brackets_ignored(self):
+        # Shell bracket tests and a "]" inside a quoted string inside
+        # an inline .sh block are shell code, not mkifs syntax:
+        # B01/B02 must not fire for them (rpi4.build lines 777/792).
+        ids = check_ids_for_file(
+            os.path.join(FIXTURES, "good_inline_script.build"))
+        self.assertEqual(ids, set())
+
+    def test_unbalanced_bracket_outside_script(self):
+        # A genuinely unbalanced "[" on a top-level line, outside any
+        # inline script block, must still be caught by B01.
+        ids = check_ids_for_file(
+            os.path.join(FIXTURES, "bad_bracket_outside_script.build"))
+        self.assertEqual(ids, {"B01"})
+
 
 class TestMakeChecks(unittest.TestCase):
     def test_bad_common_mk(self):
         ids = check_ids_for_file(
             os.path.join(FIXTURES, "bad_common", "common.mk"))
         self.assertEqual(ids, {"M01", "M02", "M03", "M04", "M05"})
+
+    def test_qtargets_only_common_mk(self):
+        # qtargets.mk pulls in qmacros.mk, so a common.mk that includes
+        # qtargets.mk but not qmacros.mk must not be flagged M02.
+        ids = check_ids_for_file(
+            os.path.join(FIXTURES, "good_qtargets_only", "common.mk"))
+        self.assertEqual(ids, set())
+
+    def test_cmake_wrapper_common_mk(self):
+        # A CMake-wrapper common.mk drives its own build and never
+        # defines NAME: M01/M02/M03 must not fire for it.
+        ids = check_ids_for_file(
+            os.path.join(FIXTURES, "cmake_wrapper", "common.mk"))
+        self.assertEqual(ids, set())
 
     def test_makefile_without_includes(self):
         path = os.path.join(FIXTURES, "m06", "Makefile")
