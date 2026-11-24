@@ -1,0 +1,24 @@
+# Synthetic build file: an inline shell script block that uses shell
+# bracket tests and a "]" inside a quoted string. B01/B02 must not
+# fire for lines inside the inline script block -- they are shell
+# code, not mkifs attribute syntax. (Regression test for
+# bsp_raspberrypi-bcm2711-rpi4/images/rpi4.build lines 777 and 792,
+# inside the customize_startup.sh / usb_start.sh blocks.)
+[image=0x80000]
+[virtual=aarch64le,raw -compress] boot = {
+    startup-myboard -v
+    procnto-smp -v
+}
+[+script] startup-script = {
+    ksh &
+}
+[perms=0744] board_startup.sh = {
+#!/bin/ksh
+if [ -e /scripts/board_startup.sh ]; then
+    echo "board startup present"
+fi
+if [ ! -d /var/run ]; then
+    mkdir /var/run
+fi
+grep "50] 00000000" /dev/log
+}
