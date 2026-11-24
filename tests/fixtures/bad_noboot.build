@@ -1,0 +1,5 @@
+# Synthetic broken build file: no boot section at all.
+[+script] startup-script = {
+    ksh &
+}
+/bin/ksh=ksh
