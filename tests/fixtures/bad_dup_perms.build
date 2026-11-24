@@ -1,0 +1,11 @@
+# Synthetic broken build file: bad perms octal + duplicate target path.
+[virtual=aarch64le,raw] boot = {
+    startup-myboard -v
+    procnto-smp -v
+}
+[+script] startup-script = {
+    ksh &
+}
+[perms=0999] /bin/tool1=tool1
+/bin/ksh=ksh
+/bin/ksh=ksh
