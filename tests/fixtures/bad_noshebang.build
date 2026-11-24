@@ -1,0 +1,11 @@
+# Synthetic broken build file: inline .sh file without a shebang.
+[virtual=aarch64le,raw] boot = {
+    startup-myboard -v
+    procnto-smp -v
+}
+[+script] startup-script = {
+    ksh &
+}
+[perms=0744] setup.sh = {
+echo "no shebang here"
+}
