@@ -1,0 +1,8 @@
+# Synthetic broken build file: the startup-script section is never closed.
+[image=0x80000]
+[virtual=aarch64le,raw -compress] boot = {
+    startup-myboard -v
+    procnto-smp -v
+}
+[+script] startup-script = {
+    ksh &
