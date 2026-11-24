@@ -1,0 +1,10 @@
+# Synthetic broken build file: procmgr_symlink destination is relative.
+[virtual=aarch64le,raw] boot = {
+    startup-myboard -v
+    procnto-smp -v
+}
+[+script] startup-script = {
+    procmgr_symlink ../../proc/boot/ldqnx.so.2 relative/path/ldqnx.so.2
+    ksh &
+}
+/bin/ksh=ksh
