@@ -1,0 +1,42 @@
+##################################################################
+##
+## Synthetic example build file (written for qnxbuild-lint tests).
+## Modelled on the public mkifs format: a boot section, a startup
+## script, file entries, links and an inline shell script.
+##
+##################################################################
+
+[-optional]
+[+keeplinked]
+[image=0x80000]
+[virtual=aarch64le,raw -compress] boot = {
+    startup-myboard -v
+    PATH=/proc/boot:/sbin:/bin procnto-smp -v
+}
+
+[+script] startup-script = {
+    procmgr_symlink ../../proc/boot/ldqnx.so.2 /usr/lib/ldqnx.so.2
+
+    display_msg "Starting serial driver ..."
+    devc-ser8250 -b115200 -e -F -u1 0x3f8,4
+    waitfor /dev/ser1
+
+    reopen /dev/ser1
+    [+session] ksh &
+}
+
+[uid=0 gid=0]
+
+[type=link] /bin/sh=/bin/ksh
+[type=link] /tmp=/dev/shmem
+
+/sbin/devc-ser8250=devc-ser8250
+/bin/ksh=ksh
+[uid=0 gid=0 perms=4755] /sbin/ping=ping
+/etc/myapp.conf=../etc/myapp.conf
+/etc/services=${QNX_TARGET}/etc/services
+
+[perms=0744] myscript.sh = {
+#!/bin/ksh
+echo hello
+}
