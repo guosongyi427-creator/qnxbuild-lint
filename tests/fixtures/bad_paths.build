@@ -1,0 +1,10 @@
+# Synthetic broken build file: referenced host files do not exist.
+[virtual=aarch64le,raw] boot = {
+    startup-myboard -v
+    procnto-smp -v
+}
+[+script] startup-script = {
+    ksh &
+}
+/sbin/missing-driver=../drivers/missing-driver
+[search=../no-such-dir] /bin/tool=../bin/tool
