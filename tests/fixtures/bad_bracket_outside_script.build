@@ -1,0 +1,12 @@
+# Synthetic broken build file: a genuinely unbalanced "[" on a
+# top-level file-entry line, OUTSIDE any inline script block.
+# B01 must still fire for it.
+[image=0x80000]
+[virtual=aarch64le,raw -compress] boot = {
+    startup-myboard -v
+    procnto-smp -v
+}
+[+script] startup-script = {
+    ksh &
+}
+[perms=0744 /bin/ksh=ksh
