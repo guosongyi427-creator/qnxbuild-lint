@@ -1,0 +1,6 @@
+# Synthetic broken build file: no startup script.
+[virtual=aarch64le,raw] boot = {
+    startup-myboard -v
+    procnto-smp -v
+}
+/bin/ksh=ksh
